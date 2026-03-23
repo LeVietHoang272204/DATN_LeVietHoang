@@ -1,0 +1,7 @@
+{
+  "css.customData": [],
+  "css.validate": true,
+  "css.lint.unknownAtRules": "ignore",
+  "python.analysis.extraPaths": ["./backend"],
+  "python.defaultInterpreterPath": "./backend/venv/Scripts/python.exe"
+}
