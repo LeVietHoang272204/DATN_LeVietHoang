@@ -21,14 +21,20 @@ langchain==0.3.0
 langchain-google-genai==2.0.0
 langchain-community==0.3.0
 langchain-chroma==0.2.0
-google-generativeai==0.8.0
+google-generativeai==0.7.2
 
 # --- Embedding ---
 sentence-transformers==3.1.0
-torch==2.4.0
+transformers==4.44.2
+# torch + torchvision pinned to CPU-only versions (from CPU wheel index)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.11.0+cpu
+torchvision==0.26.0+cpu
+# NumPy 2.0 removed np.float_ which breaks chromadb 0.4.24
+numpy==1.26.4
 
 # --- Vector Database ---
-chromadb==0.5.5
+chromadb==0.4.24
 
 # --- Document Processing ---
 pymupdf==1.24.10

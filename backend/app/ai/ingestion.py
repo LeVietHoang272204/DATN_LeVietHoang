@@ -55,6 +55,7 @@ def _process_pdf(
     all_text = []
     is_scanned = False
     total_pages = len(doc)
+    img_described = 0  # Limit Gemini Vision calls per document
 
     for page_num in range(total_pages):
         page = doc[page_num]
@@ -73,21 +74,25 @@ def _process_pdf(
         if text:
             all_text.append(text)
 
-        # Extract images for Vision LLM description
-        images = page.get_images(full=True)
-        for img_idx, img_info in enumerate(images):
-            try:
-                xref = img_info[0]
-                base_image = doc.extract_image(xref)
-                if base_image and base_image["image"]:
-                    img = Image.open(io.BytesIO(base_image["image"]))
-                    # Only process large images (likely diagrams/charts)
-                    if img.width > 200 and img.height > 200:
-                        desc = _describe_image(img)
-                        if desc:
-                            all_text.append(f"[Hình ảnh trang {page_num+1}]: {desc}")
-            except Exception as e:
-                logger.warning(f"Image extraction failed page {page_num+1}: {e}")
+        # Extract images for Vision LLM description (max 3 per document to avoid rate limits)
+        if img_described < 3:
+            images = page.get_images(full=True)
+            for img_idx, img_info in enumerate(images):
+                if img_described >= 3:
+                    break
+                try:
+                    xref = img_info[0]
+                    base_image = doc.extract_image(xref)
+                    if base_image and base_image["image"]:
+                        img = Image.open(io.BytesIO(base_image["image"]))
+                        # Only process large images (likely diagrams/charts)
+                        if img.width > 200 and img.height > 200:
+                            desc = _describe_image(img)
+                            img_described += 1
+                            if desc:
+                                all_text.append(f"[Hình ảnh trang {page_num+1}]: {desc}")
+                except Exception as e:
+                    logger.warning(f"Image extraction failed page {page_num+1}: {e}")
 
     doc.close()
 

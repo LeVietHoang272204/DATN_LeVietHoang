@@ -24,7 +24,8 @@ export default function SettingsPage() {
         theme,
         font_size: fontSize,
       });
-      // Apply theme
+      // Apply theme immediately and persist to localStorage
+      localStorage.setItem("theme", theme);
       if (theme === "dark") {
         document.documentElement.classList.add("dark");
       } else {

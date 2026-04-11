@@ -21,7 +21,7 @@ export const useAuth = create<AuthState>((set) => ({
     const res = await api.post("/auth/login", { email, password });
     const { access_token, user } = res.data;
     localStorage.setItem("token", access_token);
-    set({ token: access_token, user });
+    set({ token: access_token, user, isLoading: false });
   },
 
   register: async (email, fullName, password) => {
@@ -46,10 +46,24 @@ export const useAuth = create<AuthState>((set) => ({
         return;
       }
       const res = await api.get("/auth/me");
-      set({ user: res.data, isLoading: false });
-    } catch {
-      localStorage.removeItem("token");
-      set({ user: null, token: null, isLoading: false });
+      const userData = res.data;
+      // Sync theme from server to localStorage and DOM
+      if (userData.theme) {
+        localStorage.setItem("theme", userData.theme);
+        if (userData.theme === "dark") {
+          document.documentElement.classList.add("dark");
+        } else {
+          document.documentElement.classList.remove("dark");
+        }
+      }
+      set({ user: userData, isLoading: false });
+    } catch (err: any) {
+      if (err.response?.status === 401) {
+        localStorage.removeItem("token");
+        set({ user: null, token: null, isLoading: false });
+      } else {
+        set({ isLoading: false });
+      }
     }
   },
 }));

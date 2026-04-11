@@ -40,7 +40,7 @@ def authenticate_user(db: Session, email: str, password: str) -> User:
 
 def login_user(db: Session, email: str, password: str) -> dict:
     user = authenticate_user(db, email, password)
-    token = create_access_token(data={"sub": user.id})
+    token = create_access_token(data={"sub": str(user.id)})
     return {"access_token": token, "token_type": "bearer", "user": user}
 
 

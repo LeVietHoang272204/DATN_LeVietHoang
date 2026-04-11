@@ -63,14 +63,28 @@ def send_message(
     for msg in session.messages[-6:]:
         history.append({"role": msg.role, "content": msg.content})
 
-    # Determine collection
-    collection = f"user_{user_id}" if use_personal_docs else None
+    # Search both public and personal collections, merge results
+    from app.ai.vectorstore import search_similar
+    all_results = []
 
-    # Query RAG
+    # Always search public legal docs
+    public_results = search_similar(query=content, collection_name=None, top_k=3)
+    all_results.extend(public_results)
+
+    # Always search personal docs for logged-in user
+    personal_results = search_similar(query=content, collection_name=f"user_{user_id}", top_k=3)
+    all_results.extend(personal_results)
+
+    # Sort by relevance score and take top results
+    all_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+    top_results = all_results[:5]
+
+    # Query RAG with merged results
     result = query_legal(
         question=content,
-        collection_name=collection,
+        collection_name=None,
         chat_history=history,
+        prefetched_results=top_results,
     )
 
     # Save AI response

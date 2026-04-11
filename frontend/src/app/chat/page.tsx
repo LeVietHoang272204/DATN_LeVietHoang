@@ -206,19 +206,10 @@ export default function ChatPage() {
 
           {/* Input */}
           <div className="p-4 border-t border-gray-200 dark:border-gray-700">
-            <div className="flex items-center gap-2 mb-2">
-              <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
-                <input
-                  type="checkbox"
-                  checked={usePersonalDocs}
-                  onChange={(e) => setUsePersonalDocs(e.target.checked)}
-                  className="rounded"
-                />
-                Tìm trong tài liệu cá nhân
-              </label>
-            </div>
             <div className="flex gap-2">
               <input
+                id="chat-input"
+                name="chat-input"
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}

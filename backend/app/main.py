@@ -33,6 +33,23 @@ app.include_router(media.router)
 @app.on_event("startup")
 def on_startup():
     init_db()
+    try:
+        from app.seed import seed
+        seed()
+    except Exception as e:
+        print(f"[!] Seed warning: {e}")
+
+    # Preload embedding model in background so first chat request doesn't time out
+    import threading
+    def _preload_embeddings():
+        try:
+            from app.ai.embeddings import _get_model
+            print("[*] Loading BGE-M3 embedding model...")
+            _get_model()
+            print("[✓] BGE-M3 model ready.")
+        except Exception as e:
+            print(f"[!] Embedding model preload failed: {e}")
+    threading.Thread(target=_preload_embeddings, daemon=True).start()
 
 
 @app.get("/")

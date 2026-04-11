@@ -20,6 +20,7 @@ from app.ai.prompt_templates import (
     RAG_PROMPT_TEMPLATE,
     SUMMARY_PROMPT_TEMPLATE,
     CONFIDENCE_PROMPT,
+    CHATBOT_PROMPT,
 )
 from app.core.rate_limiter import gemini_limiter
 from app.config import settings
@@ -43,6 +44,7 @@ def query_legal(
     active_only: bool = True,
     top_k: int = settings.TOP_K_RESULTS,
     chat_history: Optional[List[dict]] = None,
+    prefetched_results: Optional[List[dict]] = None,
 ) -> dict:
     """Main RAG query: retrieve context + generate answer with confidence.
 
@@ -59,22 +61,26 @@ def query_legal(
     if legal_field:
         filter_dict["legal_field"] = legal_field
 
-    # Step 1: Retrieve relevant chunks
-    results = search_similar(
-        query=question,
-        collection_name=collection_name,
-        top_k=top_k,
-        filter_dict=filter_dict if filter_dict else None,
-    )
+    # Step 1: Retrieve relevant chunks (use prefetched if provided)
+    if prefetched_results is not None:
+        results = prefetched_results
+    else:
+        results = search_similar(
+            query=question,
+            collection_name=collection_name,
+            top_k=top_k,
+            filter_dict=filter_dict if filter_dict else None,
+        )
 
     if not results:
-        return {
-            "answer": "Tôi không tìm thấy thông tin liên quan trong cơ sở dữ liệu. "
-                      "Vui lòng thử lại với câu hỏi khác hoặc upload thêm tài liệu.",
-            "confidence": 0.0,
-            "sources": [],
-            "warning": "Không có ngữ cảnh phù hợp",
-        }
+        # Fallback: trả lời như chatbot thông thường
+        return _chatbot_fallback(question, chat_history)
+
+    # Check if retrieved docs are actually relevant (avg score > 0.35)
+    avg_score = sum(r.get("score", 0) for r in results) / len(results)
+    if avg_score < 0.35:
+        # Scores too low = docs not relevant, use chatbot mode
+        return _chatbot_fallback(question, chat_history)
 
     # Step 2: Build context with metadata
     context_parts = []
@@ -122,8 +128,8 @@ def query_legal(
     response = llm.invoke(messages)
     answer = response.content
 
-    # Step 4: Confidence scoring
-    confidence = _compute_confidence(llm, answer, context, question)
+    # Step 4: Confidence scoring from retrieval scores (no extra Gemini call)
+    confidence = _compute_confidence_from_results(results)
 
     warning = None
     if confidence < settings.CONFIDENCE_THRESHOLD:
@@ -137,6 +143,36 @@ def query_legal(
         "confidence": confidence,
         "sources": sources,
         "warning": warning,
+    }
+
+
+def _chatbot_fallback(
+    question: str,
+    chat_history: Optional[List[dict]] = None,
+) -> dict:
+    """Fallback to general chatbot when no relevant documents found."""
+    llm = _get_llm()
+    messages = [SystemMessage(content=SYSTEM_PROMPT)]
+
+    if chat_history:
+        for msg in chat_history[-6:]:
+            if msg["role"] == "user":
+                messages.append(HumanMessage(content=msg["content"]))
+            else:
+                from langchain_core.messages import AIMessage
+                messages.append(AIMessage(content=msg["content"]))
+
+    prompt = CHATBOT_PROMPT.format(question=question)
+    messages.append(HumanMessage(content=prompt))
+
+    gemini_limiter.wait_if_needed()
+    response = llm.invoke(messages)
+
+    return {
+        "answer": response.content,
+        "confidence": 0.0,
+        "sources": [],
+        "warning": None,
     }
 
 
@@ -211,19 +247,13 @@ def stream_legal_response(
     yield {"type": "done", "content": ""}
 
 
-def _compute_confidence(llm, answer: str, context: str, question: str) -> float:
-    """Ask LLM to self-evaluate confidence of its answer."""
-    try:
-        prompt = (
-            f"Ngữ cảnh: {context[:2000]}\n\n"
-            f"Câu hỏi: {question}\n\n"
-            f"Câu trả lời: {answer[:2000]}\n\n"
-            f"{CONFIDENCE_PROMPT}"
-        )
-        gemini_limiter.wait_if_needed()
-        response = llm.invoke([HumanMessage(content=prompt)])
-        score = float(response.content.strip())
-        return max(0.0, min(1.0, score))
-    except (ValueError, Exception) as e:
-        logger.warning(f"Confidence scoring failed: {e}")
-        return 0.5
+def _compute_confidence_from_results(results: list) -> float:
+    """Compute confidence from retrieval similarity scores (no extra LLM call)."""
+    if not results:
+        return 0.0
+    scores = [r.get("score", 0.0) for r in results]
+    avg_score = sum(scores) / len(scores)
+    # ChromaDB cosine distance: lower = more similar; convert to 0–1 confidence
+    # If score is already similarity (0–1), use directly
+    # Guard: clamp to [0, 1]
+    return max(0.0, min(1.0, float(avg_score)))
