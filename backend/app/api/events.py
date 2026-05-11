@@ -8,8 +8,18 @@ from app.schemas.event import (
 from app.services import event_service
 from app.core.dependencies import get_current_user, get_current_admin
 from app.models.user import User
+from app.ai.quiz_generator import generate_quiz_from_field
+from app.ai.legal_classifier import FIELD_LABELS
+from pydantic import BaseModel
+from typing import Optional
 
 router = APIRouter(prefix="/api/events", tags=["Events"])
+
+
+class QuizGenerateRequest(BaseModel):
+    legal_field: str = "khac"
+    count: int = 5
+    difficulty: str = "trung-bình"  # dễ | trung-bình | khó
 
 
 # --- Public ---
@@ -63,6 +73,54 @@ def create_event(
         end_time=data.end_time,
         max_questions=data.max_questions,
     )
+
+
+@router.post("/{event_id}/ai-generate", response_model=list[QuestionResponse])
+def ai_generate_questions(
+    event_id: int,
+    req: QuizGenerateRequest,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """AI tự sinh câu hỏi quiz từ các tài liệu pháp luật trong collection.
+
+    Admin chỉ cần chọn lĩnh vực + số câu + mức độ, hệ thống tự sinh và lưu vào event.
+    """
+    event = event_service.get_event_detail(db, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Không tìm thấy sự kiện")
+
+    questions = generate_quiz_from_field(
+        legal_field=req.legal_field,
+        count=req.count,
+        difficulty=req.difficulty,
+    )
+
+    if not questions:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Không có tài liệu '{FIELD_LABELS.get(req.legal_field, req.legal_field)}' "
+                "trong cơ sở dữ liệu. Hãy upload văn bản pháp luật trước."
+            ),
+        )
+
+    saved = []
+    for q in questions:
+        opts = q.get("options", [])
+        if isinstance(opts, dict):
+            opts = [f"{k}. {v}" for k, v in opts.items()]
+        saved.append(
+            event_service.add_question(
+                db, event_id,
+                question_text=q["question_text"],
+                options=opts,
+                correct_answer=q["correct_answer"],
+                explanation=q.get("explanation", ""),
+                points=q.get("points", 10),
+            )
+        )
+    return saved
 
 
 @router.post("/{event_id}/questions", response_model=QuestionResponse)

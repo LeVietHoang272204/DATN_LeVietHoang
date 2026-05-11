@@ -65,3 +65,17 @@ Tập trung vào:
 - Cấu trúc sơ đồ/quy trình
 - Mối quan hệ giữa các thành phần
 Trả lời bằng tiếng Việt."""
+
+WEB_SEARCH_RAG_PROMPT_TEMPLATE = """Người dùng hỏi câu hỏi pháp luật nhưng hiện tại không có tài liệu nội bộ liên quan.
+Dưới đây là kết quả tìm kiếm từ các nguồn pháp luật Việt Nam trên internet:
+
+{web_context}
+
+Cu trả lời câu hỏi sau dựa trên kết quả tìm kiếm trên:
+Câu hỏi: {question}
+
+Hướng dẫn:
+- Chỉ sử dụng thông tin từ nguồn uy tín (vbpl.vn, thuvienphapluat.vn, moj.gov.vn, chinhphu.vn).
+- Ghi rõ ”Nguồn: [URL]” sau mỗi thông tin trích dẫn.
+- Nếu kết quả tìm kiếm không đủ để trả lời, hãy nói rõ và gợi ý upload tài liệu chính thức.
+- Luôn nhắc người dùng kiểm tra văn bản pháp luật gốc để xác nhận thông tin còn hiệu lực."""

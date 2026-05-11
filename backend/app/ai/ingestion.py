@@ -14,6 +14,7 @@ from app.ai.chunking import chunk_legal_text
 from app.ai.ocr_processor import ocr_pdf_page
 from app.ai.table_extractor import extract_tables_from_pdf
 from app.ai.vectorstore import add_chunks_to_store
+from app.ai.legal_classifier import classify_legal_field, extract_metadata_from_text, save_as_markdown
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -103,6 +104,27 @@ def _process_pdf(
 
     full_text = "\n\n".join(all_text)
 
+    # Auto-classify legal field
+    title = metadata.get("document_title", os.path.basename(file_path))
+    auto_field = classify_legal_field(full_text, title)
+    if not metadata.get("legal_field"):
+        metadata["legal_field"] = auto_field
+
+    # Extract metadata from text content
+    auto_meta = extract_metadata_from_text(full_text, title)
+    if not metadata.get("document_number") and auto_meta.get("document_number"):
+        metadata["document_number"] = auto_meta["document_number"]
+    if not metadata.get("issuing_body") and auto_meta.get("issuing_body"):
+        metadata["issuing_body"] = auto_meta["issuing_body"]
+
+    # Save processed text as .md for easy review/backup
+    md_path = save_as_markdown(
+        text=full_text,
+        title=title,
+        metadata={**metadata, **auto_meta},
+        output_dir="./md_cache",
+    )
+
     # Chunk and index
     meta = {**metadata, "source_file": os.path.basename(file_path)}
     chunks = chunk_legal_text(full_text, metadata=meta)
@@ -115,6 +137,8 @@ def _process_pdf(
         "is_scanned": is_scanned,
         "tables": len(tables),
         "total_pages": total_pages,
+        "auto_legal_field": auto_field,
+        "md_path": md_path,
         "error": None,
     }
 
@@ -141,6 +165,18 @@ def _process_docx(
     if table_texts:
         full_text += "\n\n" + "\n\n".join(table_texts)
 
+    title = metadata.get("document_title", os.path.basename(file_path))
+    auto_field = classify_legal_field(full_text, title)
+    if not metadata.get("legal_field"):
+        metadata["legal_field"] = auto_field
+
+    save_as_markdown(
+        text=full_text,
+        title=title,
+        metadata=metadata,
+        output_dir="./md_cache",
+    )
+
     meta = {**metadata, "source_file": os.path.basename(file_path)}
     chunks = chunk_legal_text(full_text, metadata=meta)
     chunk_count = add_chunks_to_store(chunks, collection_name)
@@ -152,6 +188,7 @@ def _process_docx(
         "is_scanned": False,
         "tables": len(table_texts),
         "total_pages": 0,
+        "auto_legal_field": auto_field,
         "error": None,
     }
 

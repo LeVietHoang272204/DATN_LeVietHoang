@@ -21,9 +21,12 @@ from app.ai.prompt_templates import (
     SUMMARY_PROMPT_TEMPLATE,
     CONFIDENCE_PROMPT,
     CHATBOT_PROMPT,
+    WEB_SEARCH_RAG_PROMPT_TEMPLATE,
 )
+from app.ai.web_search import web_search_legal, format_search_results_for_prompt
 from app.core.rate_limiter import gemini_limiter
 from app.config import settings
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -73,14 +76,14 @@ def query_legal(
         )
 
     if not results:
-        # Fallback: trả lời như chatbot thông thường
-        return _chatbot_fallback(question, chat_history)
+        # Fallback: tìm kiếm web trước khi dùng chatbot
+        return _web_search_fallback(question, chat_history)
 
     # Check if retrieved docs are actually relevant (avg score > 0.35)
     avg_score = sum(r.get("score", 0) for r in results) / len(results)
     if avg_score < 0.35:
-        # Scores too low = docs not relevant, use chatbot mode
-        return _chatbot_fallback(question, chat_history)
+        # Scores too low = docs not relevant, search web
+        return _web_search_fallback(question, chat_history)
 
     # Step 2: Build context with metadata
     context_parts = []
@@ -144,6 +147,59 @@ def query_legal(
         "sources": sources,
         "warning": warning,
     }
+
+
+def _web_search_fallback(
+    question: str,
+    chat_history: Optional[List[dict]] = None,
+) -> dict:
+    """Tìm kiếm web khi không có tài liệu trong DB, ưu tiên nguồn pháp luật uy tín."""
+    # An toàn với cả sync và async context
+    try:
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            # Đang trong async context (FastAPI) — dùng thread pool
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(asyncio.run, web_search_legal(question))
+                search_results = future.result(timeout=10)
+        except RuntimeError:
+            # Không có event loop đang chạy
+            search_results = asyncio.run(web_search_legal(question))
+    except Exception as e:
+        logger.warning(f"Web search failed: {e}")
+        search_results = []
+
+    if search_results:
+        web_context = format_search_results_for_prompt(search_results)
+        prompt = WEB_SEARCH_RAG_PROMPT_TEMPLATE.format(
+            web_context=web_context, question=question
+        )
+        llm = _get_llm()
+        gemini_limiter.wait_if_needed()
+        response = llm.invoke([
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=prompt),
+        ])
+        trusted_sources = [r for r in search_results if r["is_trusted"]]
+        sources = [
+            {"document_title": r["title"], "chunk_text": r["snippet"][:200],
+             "relevance_score": 0.5, "url": r["url"]}
+            for r in trusted_sources[:3]
+        ]
+        return {
+            "answer": response.content,
+            "confidence": 0.4,
+            "sources": sources,
+            "warning": (
+                "⚠️ Câu trả lời dựa trên tìm kiếm web, không phải tài liệu nội bộ. "
+                "Vui lòng kiểm tra nguồn hoặc upload tài liệu chính thức để độ chính xác cao hơn."
+            ),
+        }
+
+    # Cuối cùng mới fallback chatbot thuần
+    return _chatbot_fallback(question, chat_history)
 
 
 def _chatbot_fallback(

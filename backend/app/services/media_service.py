@@ -8,6 +8,8 @@ from fastapi import UploadFile
 
 from app.models.media import MediaFile
 from app.ai.ingestion import process_document
+from app.ai.legal_classifier import is_meaningless_title, auto_generate_title
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,18 @@ def upload_media(db: Session, file: UploadFile, owner_id: int) -> MediaFile:
         media.processing_status = result["status"]
         media.is_indexed = result["status"] == "done"
         media.extracted_text = result.get("text", "")[:5000]
+
+        # Tự đặt tên nếu tên file gốc vô nghĩa
+        raw_text = result.get("text", "")
+        if raw_text and is_meaningless_title(file.filename or ""):
+            better_name = auto_generate_title(
+                text=raw_text,
+                filename=file.filename or safe_name,
+                google_api_key=settings.GOOGLE_API_KEY,
+                gemini_model=settings.GEMINI_MODEL,
+            )
+            if better_name:
+                media.original_filename = better_name
     else:
         media.processing_status = "done"
 

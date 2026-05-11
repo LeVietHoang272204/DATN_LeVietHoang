@@ -9,6 +9,8 @@ from fastapi import UploadFile
 from app.models.document import Document
 from app.ai.ingestion import process_document
 from app.ai.rag_pipeline import summarize_text, query_legal
+from app.ai.legal_classifier import is_meaningless_title, auto_generate_title
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +83,23 @@ def upload_and_process(
     doc.chunk_count = result.get("chunks", 0)
     doc.raw_text = result.get("text", "")
     doc.processing_error = result.get("error")
+
+    # Ghi lại lĩnh vực pháp luật tự phân loại nếu người dùng không chỉ định
+    if not doc.legal_field and result.get("auto_legal_field"):
+        doc.legal_field = result["auto_legal_field"]
+
+    # Tự động đặt tên nếu tên hiện tại vô nghĩa (chỉ số, UUID, ...)
+    raw_text = result.get("text", "")
+    if raw_text and is_meaningless_title(doc.title):
+        better_title = auto_generate_title(
+            text=raw_text,
+            filename=file.filename or title,
+            google_api_key=settings.GOOGLE_API_KEY,
+            gemini_model=settings.GEMINI_MODEL,
+        )
+        if better_title and better_title != doc.title:
+            doc.title = better_title
+            logger.info(f"Document {doc.id} renamed: '{title}' -> '{better_title}'")
 
     db.commit()
     db.refresh(doc)
